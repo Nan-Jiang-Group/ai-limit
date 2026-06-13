@@ -6,8 +6,9 @@
 `ai-limit` is a lightweight macOS menu bar app for tracking live **Claude Code**
 and **Codex** quota before you hit a rate limit.
 
-## The dropdown menubar
-![Menu bar dropdown](docs/screenshot-menubar-dropdown-en.png)
+## Menu Bar Dropdown
+
+<img src="docs/screenshot-menubar-dropdown-en.png" alt="ai-limit menu bar dropdown" width="400">
 
 ## Install
 
