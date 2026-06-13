@@ -19,6 +19,7 @@ OPTIONS = {
     "iconfile": "ai-limit.icns",
     "packages": ["rumps", "browser_cookie3", "Cryptodome"],
     "includes": ["usage", "i18n"],
+    "resources": ["assets"],
     "plist": {
         "LSUIElement": True,                          # No Dock icon
         "CFBundleName": "ai-limit",

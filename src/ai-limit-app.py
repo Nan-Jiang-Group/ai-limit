@@ -107,6 +107,21 @@ _THEME_PALETTES = {
     },
 }
 
+_SERVICE_ICONS = {
+    "claude": {
+        "role": "claude",
+        "asset": "claude.svg",
+        "text": "✦",
+    },
+    "codex": {
+        "role": "codex",
+        "asset": "codex.svg",
+        "text": "</>",
+    },
+}
+
+_SERVICE_LOGO_CACHE = {}
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _login_item_enabled():
@@ -159,10 +174,45 @@ def _native_bar(pct, width=4):
     filled = round(max(0, min(100, pct)) / 100 * width)
     return "▰" * filled + "▱" * (width - filled)
 
+def _service_role(service):
+    return _SERVICE_ICONS.get(service, {}).get("role", "muted")
+
+def _service_icon_text(service):
+    return _SERVICE_ICONS.get(service, {}).get("text", service)
+
+def _resource_path(*parts):
+    return pathlib.Path(__file__).resolve().parent.joinpath(*parts)
+
+def _service_logo_attachment(service, font):
+    meta = _SERVICE_ICONS.get(service) or {}
+    asset = meta.get("asset")
+    if not asset:
+        return None
+    cache_key = (service, asset)
+    img = _SERVICE_LOGO_CACHE.get(cache_key)
+    if img is None:
+        path = _resource_path("assets", asset)
+        img = AppKit.NSImage.alloc().initWithContentsOfFile_(str(path))
+        if img is None:
+            return None
+        _SERVICE_LOGO_CACHE[cache_key] = img
+    icon = img.copy()
+    size = max(16, min(19, font.capHeight() + 6))
+    icon.setSize_(AppKit.NSMakeSize(size, size))
+    icon.setTemplate_(False)
+    attach = AppKit.NSTextAttachment.alloc().init()
+    attach.setImage_(icon)
+    y_offset = (font.capHeight() - size) / 2
+    attach.setBounds_(AppKit.NSMakeRect(0, y_offset, size, size))
+    return AppKit.NSAttributedString.attributedStringWithAttachment_(attach)
+
 def _bar_text_title(items):
     parts = [
-        f"{label} ⚠️" if err else f"{label} {pct}%"
-        for label, pct, err in items
+        (
+            f"{_service_icon_text(service)} ⚠️"
+            if err else f"{_service_icon_text(service)} {pct}%"
+        )
+        for service, pct, err in items
     ]
     return " | ".join(parts) if parts else "ai-limit ⚠️"
 
@@ -415,11 +465,17 @@ def _render_themed_text_title(items, theme):
             )
         )
 
-    for i, (label, pct, err) in enumerate(items):
+    def append_logo(service):
+        logo = _service_logo_attachment(service, font)
+        if logo is None:
+            append_text(_service_icon_text(service), _service_role(service))
+        else:
+            mas.appendAttributedString_(logo)
+
+    for i, (service, pct, err) in enumerate(items):
         if i > 0:
             append_text(" | ", "muted")
-        role = "claude" if label == "Claude" else "codex"
-        append_text(label, role)
+        append_logo(service)
         if err:
             append_text(" ⚠️", "warning")
         else:
@@ -498,15 +554,22 @@ def _render_battery_title(items, theme="system"):
             )
         )
 
-    for i, (label, pct, err) in enumerate(items):
+    def append_logo(service):
+        logo = _service_logo_attachment(service, font)
+        if logo is None:
+            append_text(_service_icon_text(service), _service_role(service))
+        else:
+            mas.appendAttributedString_(logo)
+
+    for i, (service, pct, err) in enumerate(items):
         prefix = "  " if i > 0 else ""
-        role = "claude" if label == "Claude" else "codex"
         if err:
-            append_text(f"{prefix}{label}", role)
+            append_text(prefix, "muted")
+            append_logo(service)
             append_text(" ⚠️", "warning")
             continue
         append_text(prefix, "muted")
-        append_text(label, role)
+        append_logo(service)
         append_text(" ", "muted")
         bat_attach = _battery_attachment(pct, font)
         if bat_attach is not None:
@@ -818,35 +881,34 @@ class AiLimitApp(rumps.App):
         claude = self._claude or {}
         codex  = self._codex  or {}
 
-        # Menu bar title: [Claude 68% ⌬]  [CodeX 99% ⌬]
+        # Menu bar title: compact service icons plus quota.
         # The battery is a native SF Symbol — Apple's own iPhone-style glyph, vector so it never blurs
         bar_items = []
         if show_claude:
             if "error" in claude:
-                bar_items.append(("Claude", 0, True))
+                bar_items.append(("claude", 0, True))
             elif claude:
                 pct = claude["5h_left"] if mode == "5h" else claude["7d_left"]
-                bar_items.append(("Claude", pct, False))
+                bar_items.append(("claude", pct, False))
         if show_codex:
             if "error" in codex:
-                bar_items.append(("CodeX", 0, True))
+                bar_items.append(("codex", 0, True))
             elif codex:
                 pct = codex["5h_left"] if mode == "5h" else codex["7d_left"]
-                bar_items.append(("CodeX", pct, False))
+                bar_items.append(("codex", pct, False))
         if self._state.get("bar_style") == "battery":
             try:
                 _set_bar_with_battery_icons(self, bar_items, theme)
             except Exception:
                 # Fall back to the ▰▱ text version when SF Symbols are unavailable (very old macOS)
                 parts = [
-                    f"{lbl} ⚠️" if err else f"{lbl} {pct}% {_native_bar(pct)}"
-                    for lbl, pct, err in bar_items
+                    f"{_service_icon_text(service)} ⚠️"
+                    if err else f"{_service_icon_text(service)} {pct}% {_native_bar(pct)}"
+                    for service, pct, err in bar_items
                 ]
                 _set_bar_title(self, " | ".join(parts) if parts else "ai-limit ⚠️")
-        elif theme != "system":
-            _set_bar_attributed_title(self, _render_themed_text_title(bar_items, theme))
         else:
-            _set_bar_title(self, _bar_text_title(bar_items))
+            _set_bar_attributed_title(self, _render_themed_text_title(bar_items, theme))
 
         # Claude section — hidden entirely when the service is disabled
         self._claude_header._menuitem.setHidden_(not show_claude)
