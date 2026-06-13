@@ -1,6 +1,8 @@
 import datetime
 import json
 
+__version__ = "0.3.8"
+
 TZ_LOCAL = datetime.datetime.now().astimezone().tzinfo
 
 

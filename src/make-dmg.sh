@@ -115,7 +115,5 @@ if [[ -z "${NOTARY_PROFILE:-}" ]]; then
   printf "     System Settings -> Privacy & Security -> Open Anyway\n"
   printf "     Or run: xattr -dr com.apple.quarantine /Applications/ai-limit.app\n"
   printf "\n"
-  printf "For the least-friction no-Apple-ID install path, publish the DMG and use:\n"
-  printf "  curl -fsSL https://raw.githubusercontent.com/Nan-Jiang-Group/ai-limit/main/install.sh | bash\n"
   printf "The installer removes quarantine from /Applications/ai-limit.app after copying.\n"
 fi
