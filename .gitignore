@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.DS_Store
+.ai/
+
+# 经验 / AI 协作框架文档：只进私有仓 ai-limit-private，绝不进开源仓
+CLAUDE.md
+AGENTS.md
+AI_CONTEXT.md
+RUNBOOK.md
+.claude/
+.agents/
+docs/reference/
+docs/adr/
