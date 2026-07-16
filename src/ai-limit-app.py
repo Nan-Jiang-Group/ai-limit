@@ -259,6 +259,43 @@ def _fmt_reset_iso(iso, lang="en", show_weekday=True):
     except Exception:
         return "?"
 
+def _window_label(window_minutes, fallback):
+    """Format an API-provided quota window without assuming fixed Codex limits."""
+    try:
+        minutes = int(window_minutes)
+    except (TypeError, ValueError):
+        return fallback
+    if minutes > 0 and minutes % (24 * 60) == 0:
+        return f"{minutes // (24 * 60)}d"
+    if minutes > 0 and minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m" if minutes > 0 else fallback
+
+def _codex_usage_windows(codex):
+    """Return current Codex windows, with brief compatibility for the old cache shape."""
+    windows = codex.get("windows")
+    if isinstance(windows, list):
+        return windows
+
+    legacy = []
+    for mode in _DISPLAY_MODES:
+        left_key = f"{mode}_left"
+        if left_key in codex:
+            legacy.append({
+                "label": mode,
+                "left": codex[left_key],
+                "reset": codex.get(f"{mode}_reset"),
+            })
+    return legacy
+
+def _codex_window_for_mode(codex, mode):
+    """Prefer the selected window, or use the sole active Codex window."""
+    windows = _codex_usage_windows(codex)
+    for window in windows:
+        if window.get("label") == mode:
+            return window
+    return windows[0] if len(windows) == 1 else None
+
 # ── State / cache ────────────────────────────────────────────────────────────
 
 def _load_state():
@@ -364,14 +401,19 @@ def _fetch_codex(lang):
     import socket, urllib.error
     try:
         _ts, rl = live_codex_web_usage()
-        primary   = rl.get("primary") or {}
-        secondary = rl.get("secondary") or {}
+        windows = []
+        for key, fallback_label in (("primary", "5h"), ("secondary", "7d")):
+            window = rl.get(key)
+            if not window:
+                continue
+            windows.append({
+                "label": _window_label(window.get("window_minutes"), fallback_label),
+                "left": int(round(100 - float(window.get("used_percent", 0)))),
+                "reset": window.get("resets_at"),
+            })
         return {
-            "5h_left":  int(round(100 - primary.get("used_percent", 0))),
-            "7d_left":  int(round(100 - secondary.get("used_percent", 0))),
-            "5h_reset": primary.get("resets_at"),
-            "7d_reset": secondary.get("resets_at"),
-            "plan":     rl.get("plan_type") or "?",
+            "windows": windows,
+            "plan": rl.get("plan_type") or "?",
         }
     except CodexAuthError:
         return {"error": _t(lang, "No Codex access (subscription required or re-login needed)")}
@@ -679,10 +721,13 @@ class AiLimitApp(rumps.App):
         self._claude_5h     = _inert(rumps.MenuItem("  5h  …"))
         self._claude_7d     = _inert(rumps.MenuItem("  7d  …"))
 
-        # CodeX section. The plan header is a disabled (gray) row.
+        # Codex section. Its rows come from the windows currently returned by
+        # the API, so retired limits disappear from the layout.
         self._codex_header = _disable(rumps.MenuItem("CodeX"))
-        self._codex_5h     = _inert(rumps.MenuItem("  5h  …"))
-        self._codex_7d     = _inert(rumps.MenuItem("  7d  …"))
+        self._codex_rows = [
+            _inert(rumps.MenuItem("  …")),
+            _inert(rumps.MenuItem("  …")),
+        ]
 
         # Combined row: "Refresh now" on the left, last-refresh time on the
         # right. The whole row is clickable and triggers a refresh.
@@ -782,8 +827,8 @@ class AiLimitApp(rumps.App):
             self._claude_7d,
             None,
             self._codex_header,
-            self._codex_5h,
-            self._codex_7d,
+            self._codex_rows[0],
+            self._codex_rows[1],
             None,
             self._refresh_item,
             None,
@@ -894,8 +939,9 @@ class AiLimitApp(rumps.App):
             if "error" in codex:
                 bar_items.append(("codex", 0, True))
             elif codex:
-                pct = codex["5h_left"] if mode == "5h" else codex["7d_left"]
-                bar_items.append(("codex", pct, False))
+                window = _codex_window_for_mode(codex, mode)
+                if window is not None:
+                    bar_items.append(("codex", window["left"], False))
         if self._state.get("bar_style") == "battery":
             try:
                 _set_bar_with_battery_icons(self, bar_items, theme)
@@ -929,20 +975,25 @@ class AiLimitApp(rumps.App):
 
         # CodeX section
         self._codex_header._menuitem.setHidden_(not show_codex)
-        self._codex_5h._menuitem.setHidden_(not show_codex)
-        self._codex_7d._menuitem.setHidden_(not show_codex)
+        for row in self._codex_rows:
+            row._menuitem.setHidden_(True)
         if show_codex:
             if "error" in codex:
                 self._codex_header.title = "CodeX ⚠️"
-                self._codex_5h.title = f"  {codex['error'][:60]}"
-                self._codex_7d._menuitem.setHidden_(True)
+                self._codex_rows[0]._menuitem.setHidden_(False)
+                self._codex_rows[0].title = f"  {codex['error'][:60]}"
             elif codex:
                 plan = _fmt_plan(codex.get("plan"), lang)
                 self._codex_header.title = f"CodeX{plan}"
-                x5_reset = _fmt_reset_epoch(codex["5h_reset"], lang, show_weekday=False)
-                x7_reset = _fmt_reset_epoch(codex["7d_reset"], lang)
-                self._codex_5h.title = _detail_text("5h", codex["5h_left"], x5_reset, lang)
-                self._codex_7d.title = _detail_text("7d", codex["7d_left"], x7_reset, lang)
+                for row, window in zip(self._codex_rows, _codex_usage_windows(codex)):
+                    label = window["label"]
+                    reset = _fmt_reset_epoch(
+                        window.get("reset"),
+                        lang,
+                        show_weekday=not label.endswith("h"),
+                    )
+                    row._menuitem.setHidden_(False)
+                    row.title = _detail_text(label, window["left"], reset, lang)
 
         # Combined row: action label left, last-refresh time right.
         now = datetime.datetime.now(TZ_LOCAL).strftime("%-I:%M %p")
